@@ -1,0 +1,22 @@
+============================================
+  Invoice Recognizer - One Click Start
+============================================
+
+[OK] Python
+Python 3.14.3
+[OK] Node.js
+v24.13.1
+
+[1/3] Checking backend deps...
+Backend deps ready
+[2/3] Checking frontend deps...
+Frontend deps ready
+[3/3] Starting backend on port 8000...
+[3/3] Starting frontend on port 5173...
+
+============================================
+  DONE! Open http://localhost:5173
+  Stop: close the Backend / Frontend windows
+============================================
+
+Press any key to continue . . . 
