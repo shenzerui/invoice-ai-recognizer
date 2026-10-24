@@ -1,15 +1,18 @@
 <!--
   App.vue —— 应用根组件（Apple HIG 布局）
-  只改视觉（CSS + 少量内联属性删除 + 线性 SVG 图标替换），
-  不动任何事件绑定、路由、数据字段、JS 函数。
+  根据登录态切换：
+    - 未登录：全屏 router-view（Login.vue 独占）
+    - 已登录：侧边栏 + 主内容 + 顶部用户名/登出
 -->
 <template>
-  <el-container class="app-container">
-    <!-- ========== 侧边栏（220px 毛玻璃） ========== -->
+  <!-- ========== 未登录：只渲染路由（Login.vue 全屏） ========== -->
+  <router-view v-if="!loggedIn" />
+
+  <!-- ========== 已登录：侧边栏 + 主区域 ========== -->
+  <el-container v-else class="app-container">
     <el-aside width="220px" class="ac-aside">
-      <!-- 应用 Logo -->
+      <!-- Logo -->
       <div class="ac-logo">
-        <!-- 线性 SVG：收据/票据图标 1.5px 描边 -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
              class="ac-logo-icon" width="22" height="22">
@@ -19,12 +22,31 @@
         <span>票据识别</span>
       </div>
 
-      <!-- 导航分组：概览 -->
+      <!-- 用户信息（侧栏底部） -->
+      <div class="ac-user-card">
+        <div class="ac-avatar">{{ userInitial }}</div>
+        <div class="ac-user-meta">
+          <div class="ac-user-name">{{ userName }}</div>
+          <div class="ac-user-role">已登录</div>
+        </div>
+        <el-tooltip content="退出登录" placement="right">
+          <div class="ac-logout" @click="onLogout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                 width="16" height="16">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+              <path d="M10 17l-5-5 5-5"/>
+              <path d="M15 12H5"/>
+            </svg>
+          </div>
+        </el-tooltip>
+      </div>
+
+      <!-- 导航分组 -->
       <div class="ac-nav-group">
         <div class="ac-nav-title">概览</div>
         <el-menu :default-active="$route.path" router>
           <el-menu-item index="/dashboard">
-            <!-- SF Symbols 风格：方框图表 -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                  class="ac-nav-icon" width="18" height="18">
@@ -36,12 +58,10 @@
         </el-menu>
       </div>
 
-      <!-- 导航分组：识别 -->
       <div class="ac-nav-group">
         <div class="ac-nav-title">识别</div>
         <el-menu :default-active="$route.path" router>
           <el-menu-item index="/upload">
-            <!-- SF Symbols 风格：云 + 上传箭头 -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                  class="ac-nav-icon" width="18" height="18">
@@ -53,12 +73,10 @@
         </el-menu>
       </div>
 
-      <!-- 导航分组：数据 -->
       <div class="ac-nav-group">
         <div class="ac-nav-title">数据</div>
         <el-menu :default-active="$route.path" router>
           <el-menu-item index="/history">
-            <!-- SF Symbols 风格：文档列表 -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                  class="ac-nav-icon" width="18" height="18">
@@ -70,12 +88,10 @@
         </el-menu>
       </div>
 
-      <!-- 导航分组：系统 -->
       <div class="ac-nav-group">
         <div class="ac-nav-title">系统</div>
         <el-menu :default-active="$route.path" router>
           <el-menu-item index="/settings">
-            <!-- SF Symbols 风格：齿轮 -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                  class="ac-nav-icon" width="18" height="18">
@@ -88,15 +104,13 @@
       </div>
     </el-aside>
 
-    <!-- ========== 主区域 ========== -->
+    <!-- 主区域 -->
     <el-container>
-      <!-- 顶部（sticky 毛玻璃 + iOS 大标题） -->
       <el-header class="ac-header">
         <div class="ac-header-left">
           <div class="ac-header-title">{{ $route.meta.title || '票据识别管理系统' }}</div>
-          <div class="ac-header-sub">票据识别管理系统 · 本地运行</div>
+          <div class="ac-header-sub">票据识别管理系统 · {{ userName }}</div>
         </div>
-        <!-- 橘色警告药丸（浅黄底 + i 线性图标）-->
         <div class="ac-warning-pill">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -108,7 +122,6 @@
         </div>
       </el-header>
 
-      <!-- 主内容 -->
       <el-main class="ac-main">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -121,14 +134,53 @@
 </template>
 
 <script setup>
-// App.vue 只负责整体布局，不承载业务逻辑
+import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessageBox, ElMessage } from 'element-plus'
+import { getUser, isLoggedIn, clearToken, me } from '@/api/auth'
+import { ref } from 'vue'
+
+const router = useRouter()
+const currentUser = ref(getUser())
+
+const loggedIn = computed(() => isLoggedIn())
+
+const userName = computed(() => currentUser.value?.username || '用户')
+const userInitial = computed(() => {
+  const name = currentUser.value?.username || 'U'
+  return name.charAt(0).toUpperCase()
+})
+
+async function refreshUser() {
+  if (!isLoggedIn()) return
+  try {
+    const { setUser } = await import('@/api/auth')
+    const res = await me()
+    currentUser.value = res.data
+    setUser(res.data)
+  } catch { /* token 可能过期，401 拦截器会处理 */ }
+}
+
+function onLogout() {
+  ElMessageBox.confirm('确定要退出登录吗？', '退出登录', {
+    confirmButtonText: '退出',
+    cancelButtonText: '取消',
+    type: 'warning',
+  }).then(() => {
+    clearToken()
+    currentUser.value = null
+    ElMessage.success('已退出登录')
+    router.replace('/login')
+  }).catch(() => {})
+}
+
+onMounted(refreshUser)
 </script>
 
 <style scoped>
-/* ===== 容器 ===== */
 .app-container { height: 100vh; }
 
-/* ===== 侧边栏 ===== */
+/* 侧边栏 */
 .ac-aside {
   background: var(--ac-sidebar-bg);
   backdrop-filter: saturate(180%) blur(20px);
@@ -140,7 +192,6 @@
   overflow-y: auto;
 }
 
-/* Logo 区 */
 .ac-logo {
   display: flex;
   align-items: center;
@@ -154,7 +205,57 @@
 }
 .ac-logo-icon { color: var(--ac-blue); flex-shrink: 0; }
 
-/* 导航分组 */
+/* 用户卡片（侧栏底部）*/
+.ac-user-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: auto 12px 16px;
+  padding: 10px 12px;
+  background: var(--ac-field);
+  border-radius: 12px;
+}
+.ac-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--ac-blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ac-user-meta { flex: 1; min-width: 0; }
+.ac-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ac-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ac-user-role {
+  font-size: 11px;
+  color: var(--ac-text-tertiary);
+}
+.ac-logout {
+  width: 28px; height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--ac-text-tertiary);
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+  flex-shrink: 0;
+}
+.ac-logout:hover {
+  background: var(--ac-red-soft);
+  color: var(--ac-red);
+}
+
 .ac-nav-group { padding: 0 var(--ac-3); margin-bottom: var(--ac-4); }
 .ac-nav-title {
   font-size: 12px;
@@ -165,7 +266,6 @@
   letter-spacing: 0.04em;
 }
 
-/* el-menu 覆写 —— 干掉 Element Plus 深灰底，用我们的毛玻璃 */
 .ac-aside .el-menu {
   background: transparent !important;
   border-right: none !important;
@@ -197,7 +297,7 @@
 }
 .ac-aside .el-menu-item.is-active .ac-nav-icon { color: var(--ac-blue); }
 
-/* ===== 顶部（sticky 毛玻璃） ===== */
+/* 顶部 */
 .ac-header {
   height: auto !important;
   padding: var(--ac-5) var(--ac-7) var(--ac-4);
@@ -227,7 +327,6 @@
   color: var(--ac-text-tertiary);
 }
 
-/* 警告药丸 */
 .ac-warning-pill {
   display: inline-flex;
   align-items: center;
@@ -243,14 +342,13 @@
   flex-shrink: 0;
 }
 
-/* ===== 主内容 ===== */
+/* 主内容 */
 .ac-main {
   padding: var(--ac-6) var(--ac-7);
   overflow-y: auto;
   background: var(--ac-bg);
 }
 
-/* 过渡 */
 .fade-enter-active, .fade-leave-active { transition: opacity var(--ac-dur) var(--ac-ease); }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

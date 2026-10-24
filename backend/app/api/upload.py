@@ -1,7 +1,7 @@
 """
 api/upload.py
 =============
-票据上传识别接口 —— 支持单张、批量。
+票据上传识别接口 —— 支持单张、批量。需要登录，识别结果自动归属当前用户。
 """
 
 from typing import List
@@ -9,9 +9,11 @@ from fastapi import APIRouter, File, UploadFile, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
+from ..models.user import User
 from ..services.ocr_service import OCRService
 from ..schemas.invoice import BatchUploadResult, InvoiceCreate
 from ..utils.settings_manager import SettingsManager
+from ..utils.security import get_current_user
 
 router = APIRouter()
 
@@ -20,6 +22,7 @@ router = APIRouter()
 async def upload_single(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """上传一张票据图片，返回识别结果 + 校验信息 + 是否重复。"""
     bytes_data = await file.read()
@@ -30,9 +33,8 @@ async def upload_single(
         "invoice_data": invoice_data.model_dump() if result.success else None,
     }
 
-    # 非重复且成功 → 自动入库
     if result.success and not result.is_duplicate:
-        inv = await OCRService.save_invoice(session, invoice_data)
+        inv = await OCRService.save_invoice(session, invoice_data, user_id=current_user.id)
         payload["invoice_id"] = inv.id
         payload["message"] = result.message + "，已入库"
 
@@ -43,21 +45,19 @@ async def upload_single(
 async def upload_batch(
     files: List[UploadFile] = File(...),
     session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """批量上传 —— 每张独立处理，返回各自状态。"""
     results = []
     for f in files:
         bytes_data = await f.read()
         invoice_data, result = await OCRService.process_single(bytes_data, f.filename or "", session)
 
         item = result.model_dump()
-
         if result.success and not result.is_duplicate:
             try:
-                inv = await OCRService.save_invoice(session, invoice_data)
+                inv = await OCRService.save_invoice(session, invoice_data, user_id=current_user.id)
                 item["invoice_id"] = inv.id
             except Exception as e:
-                # 入库异常（例如并发唯一冲突）不阻塞后续处理
                 item["success"] = False
                 item["message"] = f"识别成功但入库失败: {e}"
 

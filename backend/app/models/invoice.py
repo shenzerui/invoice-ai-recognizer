@@ -23,6 +23,8 @@ class Invoice(Base):
 
     # ====== 主键与基础信息 ======
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    # 所属用户（多租户隔离）
+    user_id: Mapped[int] = mapped_column(default=0, index=True)
     # 票据类型枚举值，参见 config.TICKET_TYPES
     ticket_type: Mapped[str] = mapped_column(String(32), index=True, default="unknown")
 

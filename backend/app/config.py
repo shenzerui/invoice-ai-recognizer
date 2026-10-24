@@ -83,3 +83,10 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 # ====== 单文件最大大小（字节） ======
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024   # 10 MB
+
+# ====== JWT 认证配置 ======
+# 生产环境应该从环境变量读取；本地演示放 config 里够用
+import os as _os
+JWT_SECRET = _os.environ.get("JWT_SECRET", "invoice-recognizer-local-dev-secret-change-in-production")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_MINUTES = 60 * 24 * 7   # 7 天

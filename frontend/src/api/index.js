@@ -1,21 +1,43 @@
 /**
  * api/index.js —— axios 实例 + 拦截器
- * 所有请求统一从这里发出，baseURL 会被 Vite 代理到后端 8000 端口。
  */
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { getToken, clearToken } from './auth'
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 60000,  // OCR 识别可能慢一点
+  timeout: 60000,
 })
 
-// 响应拦截器：统一错误提示
+// ====== 请求拦截器：自动带 Authorization ======
+request.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// ====== 响应拦截器：401 自动跳登录页 ======
 request.interceptors.response.use(
   (res) => res,
   (err) => {
+    const status = err?.response?.status
     const msg = err?.response?.data?.detail || err.message || '请求失败'
-    ElMessage.error(msg)
+
+    if (status === 401) {
+      clearToken()
+      const url = err.config?.url || ''
+      if (!url.includes('/auth/login') && !url.includes('/auth/register')) {
+        ElMessage.warning('登录已失效，请重新登录')
+        // 直接改 hash（hash history），避免循环依赖
+        window.location.hash = '#/login'
+      }
+    } else {
+      ElMessage.error(msg)
+    }
+
     return Promise.reject(err)
   }
 )

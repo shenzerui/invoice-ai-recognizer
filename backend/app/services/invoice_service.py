@@ -2,6 +2,7 @@
 services/invoice_service.py
 ===========================
 票据历史记录业务 —— 搜索、分页、更新、删除、导出。
+所有查询都按 user_id 隔离，确保用户间数据不可见。
 """
 
 from datetime import datetime
@@ -15,11 +16,12 @@ from ..schemas.invoice import InvoiceUpdate
 
 
 class InvoiceService:
-    """票据 CRUD & 搜索 & 导出服务。"""
+    """票据 CRUD & 搜索 & 导出服务（user_id 多租户隔离）。"""
 
     @staticmethod
     async def list_invoices(
         session: AsyncSession,
+        user_id: int,
         page: int = 1,
         page_size: int = 20,
         ticket_type: Optional[str] = None,
@@ -27,18 +29,11 @@ class InvoiceService:
         end_date: Optional[str] = None,
         keyword: Optional[str] = None,
     ) -> dict:
-        """
-        列表查询（带分页 + 多条件筛选）。
-
-        参数:
-            ticket_type: 票据类型枚举值
-            start_date / end_date: 开票日期范围（字符串格式，如 "2024-01-01"）
-            keyword: 模糊搜索关键词（号码 / 代码 / 购买方 / 销售方）
-        """
+        """列表查询（带分页 + 多条件筛选 + user_id 过滤）。"""
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
 
-        conditions = []
+        conditions = [Invoice.user_id == user_id]
         if ticket_type:
             conditions.append(Invoice.ticket_type == ticket_type)
         if start_date:
@@ -52,23 +47,16 @@ class InvoiceService:
                 Invoice.invoice_code.like(like),
                 Invoice.buyer.like(like),
                 Invoice.seller.like(like),
-                Invoice.seller.like(like),
                 Invoice.tags.like(like),
                 Invoice.remark.like(like),
             ))
 
-        where = and_(*conditions) if conditions else None
+        where = and_(*conditions)
 
-        # 总数
-        count_stmt = select(func.count(Invoice.id))
-        if where:
-            count_stmt = count_stmt.where(where)
+        count_stmt = select(func.count(Invoice.id)).where(where)
         total = (await session.execute(count_stmt)).scalar_one()
 
-        # 数据
-        stmt = select(Invoice)
-        if where:
-            stmt = stmt.where(where)
+        stmt = select(Invoice).where(where)
         stmt = stmt.order_by(desc(Invoice.created_at)).offset((page - 1) * page_size).limit(page_size)
         rows = (await session.execute(stmt)).scalars().all()
 
@@ -81,29 +69,27 @@ class InvoiceService:
         }
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, inv_id: int) -> Invoice | None:
-        return await session.get(Invoice, inv_id)
+    async def get_by_id(session: AsyncSession, inv_id: int, user_id: int) -> Invoice | None:
+        """按 id + user_id 查询（确保不能越权访问别人的数据）。"""
+        result = await session.execute(
+            select(Invoice).where(Invoice.id == inv_id, Invoice.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
-    async def update(session: AsyncSession, inv_id: int, data: InvoiceUpdate) -> Invoice | None:
-        inv = await session.get(Invoice, inv_id)
+    async def update(session: AsyncSession, inv_id: int, user_id: int, data: InvoiceUpdate) -> Invoice | None:
+        inv = await InvoiceService.get_by_id(session, inv_id, user_id)
         if not inv:
             return None
 
         update_fields = data.model_dump(exclude_unset=True)
-
-        # 标签特殊处理
         if "tags" in update_fields:
             inv.set_tags_list(update_fields.pop("tags") or [])
-
-        # 普通字段直接覆盖
         for key, value in update_fields.items():
             if hasattr(inv, key) and value is not None:
                 setattr(inv, key, value)
-
         inv.updated_at = datetime.now()
 
-        # 如果金额相关字段被修改，重新校验
         if any(k in update_fields for k in ["amount", "tax", "total_amount"]):
             from ..utils.validator import validate_amount
             v = validate_amount(inv.amount, inv.tax, inv.total_amount)
@@ -116,11 +102,10 @@ class InvoiceService:
         return inv
 
     @staticmethod
-    async def delete(session: AsyncSession, inv_id: int) -> bool:
-        inv = await session.get(Invoice, inv_id)
+    async def delete(session: AsyncSession, inv_id: int, user_id: int) -> bool:
+        inv = await InvoiceService.get_by_id(session, inv_id, user_id)
         if not inv:
             return False
-        # 同时删除本地图片文件
         if inv.image_path:
             try:
                 from pathlib import Path
@@ -128,7 +113,7 @@ class InvoiceService:
                 if p.exists():
                     p.unlink()
             except Exception:
-                pass  # 图片删不掉不要阻塞数据库删除
+                pass
         await session.delete(inv)
         await session.commit()
         return True
@@ -136,13 +121,14 @@ class InvoiceService:
     @staticmethod
     async def list_all_for_export(
         session: AsyncSession,
+        user_id: int,
         ticket_type: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> list:
         """不分页取全部（用于导出）。"""
         result = await InvoiceService.list_invoices(
-            session, page=1, page_size=10000,
+            session, user_id=user_id, page=1, page_size=10000,
             ticket_type=ticket_type, start_date=start_date, end_date=end_date,
         )
         return result["items"]
